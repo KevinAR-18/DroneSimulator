@@ -20,14 +20,14 @@ from PySide6.QtWidgets import (
 from drone_model import DroneModel
 from serial_reader import SerialReader
 from style import APP_STYLESHEET
-from widgets import SimView
+from widgets import CameraMode, SimView
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SIMULATOR DRONE MANGKRAK")
-        self.resize(1150, 800)
+        self.setWindowTitle("SIMULATOR DRONE MANGKRAK 3D V2")
+        self.resize(1240, 840)
 
         self.model = DroneModel()
         self.reader = None
@@ -55,20 +55,22 @@ class MainWindow(QMainWindow):
         root.setSpacing(8)
 
         self.view = SimView(self.model)
-        self.view.setMinimumWidth(620)
+        self.view.setMinimumWidth(680)
+        self.view.camera_mode_changed.connect(self._on_cam_mode_changed)
         root.addWidget(self.view, 1)
 
         side = QVBoxLayout()
         side.setSpacing(8)
 
-        title = QLabel("SIMULATOR DRONE MANGKRAK")
+        title = QLabel("SIMULATOR DRONE MANGKRAK 3D")
         title.setObjectName("appTitle")
-        sub = QLabel("Kontrol drone • JOY: Mode 2 (ROLL/THR & YAW/PITCH)")
+        sub = QLabel("Mode 2 (ROLL/THR & YAW/PITCH) • Visual Arena V2")
         sub.setObjectName("appSub")
         side.addWidget(title)
         side.addWidget(sub)
 
         side.addWidget(self._build_serial_box())
+        side.addWidget(self._build_camera_box())
         side.addWidget(self._build_channels_box())
         side.addWidget(self._build_telemetry_box())
         side.addWidget(self._build_log_box(), 1)
@@ -111,6 +113,37 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.status_label, 2, 2)
         lay.addWidget(self.arm_btn, 3, 0, 1, 3)
         return box
+
+    def _build_camera_box(self):
+        box = QGroupBox("Kontrol Kamera & Tampilan")
+        lay = QGridLayout(box)
+
+        lay.addWidget(QLabel("Mode Kamera:"), 0, 0)
+        self.cam_combo = QComboBox()
+        self.cam_combo.addItems(CameraMode.ALL)
+        self.cam_combo.currentTextChanged.connect(self._on_cam_combo_changed)
+        lay.addWidget(self.cam_combo, 0, 1, 1, 2)
+
+        self.btn_radar = QPushButton("Toggle Radar [M]")
+        self.btn_radar.clicked.connect(self.view.toggle_radar)
+        lay.addWidget(self.btn_radar, 1, 0, 1, 2)
+
+        self.btn_hud = QPushButton("Toggle HUD [H]")
+        self.btn_hud.clicked.connect(self.view.toggle_hud)
+        lay.addWidget(self.btn_hud, 1, 2)
+
+        return box
+
+    def _on_cam_combo_changed(self, mode_text):
+        if mode_text and self.view.camera_mode != mode_text:
+            self.view.set_camera_mode(mode_text)
+
+    def _on_cam_mode_changed(self, mode_text):
+        idx = self.cam_combo.findText(mode_text)
+        if idx >= 0 and self.cam_combo.currentIndex() != idx:
+            self.cam_combo.blockSignals(True)
+            self.cam_combo.setCurrentIndex(idx)
+            self.cam_combo.blockSignals(False)
 
     def _build_channels_box(self):
         box = QGroupBox("Channel (dari joystick test)")
@@ -179,20 +212,20 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(box)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setMaximumHeight(110)
+        self.log_view.setMaximumHeight(100)
         lay.addWidget(self.log_view)
         return box
 
     def _build_help_box(self):
-        box = QGroupBox("Kontrol")
+        box = QGroupBox("Kontrol & Hotkey V2")
         lay = QVBoxLayout(box)
         lbl = QLabel(
-            "SPASI = ARM/DISARM\n"
-            "R = Reset drone\n"
-            "ESC = Keluar\n"
-            "Scroll = Zoom\n\n"
-            "Arah terbalik? ubah\n"
-            "INVERT_*/SWAP_* di .ino."
+            "SPASI = ARM/DISARM  •  C = Kamera\n"
+            "M = Mini-Map Radar  •  H = Toggle HUD\n"
+            "O = FPV Scanlines Noise\n"
+            "Left Drag Mouse = Orbit Kamera Free Look\n"
+            "Scroll = Zoom In / Zoom Out\n"
+            "R = Reset drone  •  ESC = Keluar"
         )
         lay.addWidget(lbl)
         return box
@@ -241,7 +274,6 @@ class MainWindow(QMainWindow):
         self._log("Koneksi diputus.")
 
     def _on_channels(self, ch1, ch2, ch3, ch4):
-        # ch1=ROLL(0-255) ch2=THROTTLE(0-255) ch3=YAW(0-255) ch4=PITCH(0-255)
         vals = [ch1, ch2, ch3, ch4]
         for i in range(4):
             if self.invert[i]:
@@ -258,8 +290,12 @@ class MainWindow(QMainWindow):
         self._update_channel_bars()
 
     def _update_channel_bars(self):
-        vals = {"CH1": self.latest[0], "CH2": self.latest[1],
-                "CH3": self.latest[2], "CH4": self.latest[3]}
+        vals = {
+            "CH1": self.latest[0],
+            "CH2": self.latest[1],
+            "CH3": self.latest[2],
+            "CH4": self.latest[3],
+        }
         for key, (bar, val) in self.ch_bars.items():
             bar.setValue(vals[key])
             val.setText(str(vals[key]))
@@ -336,6 +372,18 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Space:
             self._set_armed(not self.model.armed)
+        elif event.key() == Qt.Key_C:
+            self.view.cycle_camera_mode()
+            self._log(f"Kamera diganti ke mode: {self.view.camera_mode}")
+        elif event.key() == Qt.Key_H:
+            self.view.toggle_hud()
+            self._log(f"HUD {'ditampilkan' if self.view.hud_visible else 'disembunyikan'}.")
+        elif event.key() == Qt.Key_M:
+            self.view.toggle_radar()
+            self._log(f"Mini-Map Radar {'ditampilkan' if self.view.radar_visible else 'disembunyikan'}.")
+        elif event.key() == Qt.Key_O:
+            self.view.toggle_osd_scanlines()
+            self._log(f"FPV Scanlines {'diaktifkan' if self.view.osd_scanlines else 'dinonaktifkan'}.")
         elif event.key() == Qt.Key_R:
             self.model.reset()
             self._log("Drone di-reset.")
