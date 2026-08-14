@@ -64,7 +64,7 @@ class MainWindow(QMainWindow):
 
         title = QLabel("SIMULATOR DRONE MANGKRAK 3D")
         title.setObjectName("appTitle")
-        sub = QLabel("Mode 2 (ROLL/THR & YAW/PITCH) • Visual Arena V2")
+        sub = QLabel("Kontrol drone 3D • JOY: Mode 2 (ROLL/THR & YAW/PITCH)")
         sub.setObjectName("appSub")
         side.addWidget(title)
         side.addWidget(sub)
