@@ -1,4 +1,4 @@
-# 🛸 SIMULATOR DRONE MANGKRAK 3D (V2)
+# 🛸 SIMULATOR DRONE MANGKRAK 3D (V3)
 
 **Pembuat Utama (Lead Creator & Developer):** **Ilham Purnomo**  
 Aplikasi simulator penerbangan quadcopter 3D interaktif berbasis **Python** dan **PySide6 QPainter** yang mendukung koneksi transmitter remote control fisik via Serial (Arduino / ESP32).
@@ -12,18 +12,21 @@ Aplikasi simulator penerbangan quadcopter 3D interaktif berbasis **Python** dan 
 
 ---
 
-## 📋 Fitur Utama Perangkat Lunak
+## 📋 Fitur Unggulan Perangkat Lunak (Versi 3)
 
-- **Engine Rendering 3D Faceted**: Model quadcopter 3D polyhedral, directional sunlighting (Lambertian shading), & depth sorting tanpa dependensi library 3D eksternal (Pure PySide6 Vector Graphics).
-- **Sistem Multi-Kamera 3D**: Mode `CHASE` (kamera sinematik), `ORBIT` (free look drag mouse 360°), `FPV` (cockpit moncong drone), dan `TOP-DOWN` (taktis overhead).
-- **Arena Rintangan 3D (Flight Arena Props)**:
-  - 3D Neon Racing Gates dengan sensor *gate pass detection*.
-  - Platform helipad bertingkat `P1` (+3m) & `P2` (+5.5m) untuk latihan pendaratan presisi.
-  - Penanda koordinat `HOME (0,0)`.
-- **FPV Betaflight Style OSD & Scanlines**: Interface FPV OSD dengan crosshair reticle, telemetri hijau neon, dan opsi efek *scanline video noise*.
-- **2D Mini-Map Radar Overlay**: Radar bundar taktis 35m di pojok layar yang menampilkan posisi drone, heading, helipad, dan racing gates secara real-time.
-- **Visual Environment & Efek Partikel**: Efek debu tanah (*ground particle wash*), bayangan lembut dinamis (*dynamic soft shadow*), riakan angin baling-baling (*prop wash ripple*), dan *3D flight trail fade*.
-- **Cyber-Dark QSS Theme**: Antarmuka visual gelap futuristik ber-accent cyan neon.
+- **Engine Rendering 3D Faceted**: Model quadcopter 3D Dark Carbon FPV, directional sunlighting (Lambertian + Specular shading), 4 landing skids, serta depth sorting tanpa dependensi library 3D eksternal (Pure PySide6 Vector Graphics).
+- **Siklus Tema Waktu (Day / Sunset / Night Cyberpunk)**:
+  - *Day*: Siang cerah dengan awan bergerak (*procedural clouds*).
+  - *Sunset*: Nuansa senja emas (*golden hour*) dengan cahaya matahari hangat.
+  - *Night*: Malam berbintang dengan lampu neon menyala kontras tinggi.
+  - *Hotkey*: Tekan **`T`** untuk mengganti tema.
+- **3D Drone Spotlight / Searchlight**: Sorot lampu 3D memancar dari moncong kamera drone ke tanah (*illuminated ground light pool*). Tekan **`L`** untuk toggle on/off.
+- **Objek Lingkungan 3D**: Pohon pinus 3D *low-poly* dan kincir angin 3D (*wind turbine*) berputar di kejauhan.
+- **Sistem Multi-Kamera 3D**: Mode `CHASE` (kamera kejar halus), `ORBIT` (free look 360° dengan *inertia damping*), `FPV` (cockpit moncong drone + vignette), dan `TOP-DOWN` (taktis overhead). Tekan **`C`** untuk mengganti mode.
+- **Dynamic Speed Lines & Alerts**: Efek garis akselerasi (*speed lines*) saat kecepatan tinggi ($> 6.5\text{m/s}$), denyut merah low-battery alert, dan peringatan *pull up*.
+- **Mini Telemetry Sparkline Graph**: Grafik strip mini real-time di HUD yang memplot ketinggian (*altitude*) dan kecepatan (*speed*).
+- **2D Mini-Map Radar Overlay**: Radar bundar taktis 35m di pojok layar yang menampilkan posisi drone, heading, helipad, dan racing gates secara real-time. Tekan **`M`** untuk toggle.
+- **FPV Betaflight Style OSD**: Interface FPV OSD dengan crosshair reticle, telemetri hijau neon, dan opsi scanline video noise (Tekan **`O`**).
 
 ---
 
@@ -33,10 +36,10 @@ Aplikasi simulator penerbangan quadcopter 3D interaktif berbasis **Python** dan 
 |--------|-------------------|
 | `main.py` | Entry point utama aplikasi |
 | `main_window.py` | Window GUI PySide6, pengatur layout, telemetry panel, & event hotkey handler |
-| `widgets.py` | Engine visual 3D (`SimView`), kamera, lighting, particle dust, FPV OSD, & 2D Radar |
+| `widgets.py` | Engine visual 3D (`SimView`), tema lingkungan, kamera, lighting, spotlight, props 3D, FPV OSD, & Radar |
 | `drone_model.py` | Simulasi fisika drone, Altitude Hold, tilt angles, drag velocity, & battery system |
 | `serial_reader.py` | Asynchronous QThread parsing data serial RC 4-channel (Baud 115200) |
-| `style.py` | Stylesheet Cyber-Dark QSS modern dengan aksen cyan neon |
+| `style.py` | Stylesheet Cyber-Dark QSS modern dengan aksen cyan neon & oranye |
 
 ---
 
@@ -76,10 +79,12 @@ python main.py
 |---------------|--------|
 | **`SPASI`** | ARM / DISARM Drone |
 | **`C`** | Ganti Mode Kamera (`CHASE` $\rightarrow$ `ORBIT` $\rightarrow$ `FPV` $\rightarrow$ `TOP-DOWN`) |
+| **`T`** | Ganti Tema Waktu (`DAY` $\rightarrow$ `SUNSET` $\rightarrow$ `NIGHT`) |
+| **`L`** | Toggle Lampu Sorot 3D Drone (*Spotlight*) |
 | **`M`** | Toggle Mini-Map Radar 2D (On / Off) |
 | **`H`** | Toggle Tampilan HUD (On / Off) |
 | **`O`** | Toggle FPV Scanlines Video Noise |
-| **`Left Drag Mouse`** | Rotasi Orbit Kamera 360° |
+| **`Left Drag Mouse`** | Rotasi Orbit Kamera 360° (dengan Inertia Damping) |
 | **`Scroll Wheel`** | Zoom In / Zoom Out Kamera |
 | **`R`** | Reset drone ke koordinat HOME (0,0,0) |
 | **`ESC`** | Keluar dari aplikasi |

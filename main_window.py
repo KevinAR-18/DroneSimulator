@@ -20,14 +20,14 @@ from PySide6.QtWidgets import (
 from drone_model import DroneModel
 from serial_reader import SerialReader
 from style import APP_STYLESHEET
-from widgets import CameraMode, SimView
+from widgets import CameraMode, EnvTheme, SimView
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SIMULATOR DRONE MANGKRAK 3D V2")
-        self.resize(1240, 840)
+        self.setWindowTitle("SIMULATOR DRONE MANGKRAK 3D V3")
+        self.resize(1260, 850)
 
         self.model = DroneModel()
         self.reader = None
@@ -115,24 +115,36 @@ class MainWindow(QMainWindow):
         return box
 
     def _build_camera_box(self):
-        box = QGroupBox("Kontrol Kamera & Tampilan")
+        box = QGroupBox("Kamera & Lingkungan V3")
         lay = QGridLayout(box)
 
-        lay.addWidget(QLabel("Mode Kamera:"), 0, 0)
+        lay.addWidget(QLabel("Kamera:"), 0, 0)
         self.cam_combo = QComboBox()
         self.cam_combo.addItems(CameraMode.ALL)
         self.cam_combo.currentTextChanged.connect(self._on_cam_combo_changed)
         lay.addWidget(self.cam_combo, 0, 1, 1, 2)
 
-        self.btn_radar = QPushButton("Toggle Radar [M]")
-        self.btn_radar.clicked.connect(self.view.toggle_radar)
-        lay.addWidget(self.btn_radar, 1, 0, 1, 2)
+        self.btn_theme = QPushButton("Tema [T]")
+        self.btn_theme.clicked.connect(self._on_theme_btn_clicked)
+        lay.addWidget(self.btn_theme, 1, 0)
 
-        self.btn_hud = QPushButton("Toggle HUD [H]")
-        self.btn_hud.clicked.connect(self.view.toggle_hud)
-        lay.addWidget(self.btn_hud, 1, 2)
+        self.btn_spotlight = QPushButton("Lampu [L]")
+        self.btn_spotlight.clicked.connect(self._on_spotlight_btn_clicked)
+        lay.addWidget(self.btn_spotlight, 1, 1)
+
+        self.btn_radar = QPushButton("Radar [M]")
+        self.btn_radar.clicked.connect(self.view.toggle_radar)
+        lay.addWidget(self.btn_radar, 1, 2)
 
         return box
+
+    def _on_theme_btn_clicked(self):
+        self.view.cycle_theme()
+        self._log(f"Tema diubah ke: {self.view.env_theme}")
+
+    def _on_spotlight_btn_clicked(self):
+        self.view.toggle_spotlight()
+        self._log(f"Lampu Sorot {'dinyalakan' if self.view.spotlight_on else 'dimatikan'}.")
 
     def _on_cam_combo_changed(self, mode_text):
         if mode_text and self.view.camera_mode != mode_text:
@@ -217,15 +229,15 @@ class MainWindow(QMainWindow):
         return box
 
     def _build_help_box(self):
-        box = QGroupBox("Kontrol & Hotkey V2")
+        box = QGroupBox("Kontrol & Hotkey V3")
         lay = QVBoxLayout(box)
         lbl = QLabel(
-            "SPASI = ARM/DISARM  •  C = Kamera\n"
-            "M = Mini-Map Radar  •  H = Toggle HUD\n"
-            "O = FPV Scanlines Noise\n"
-            "Left Drag Mouse = Orbit Kamera Free Look\n"
-            "Scroll = Zoom In / Zoom Out\n"
-            "R = Reset drone  •  ESC = Keluar"
+            "SPASI = ARM/DISARM  •  C = Mode Kamera\n"
+            "T = Ganti Tema (Day/Sunset/Night)\n"
+            "L = Lampu Sorot 3D  •  M = Mini-Map Radar\n"
+            "H = Toggle HUD  •  O = FPV Scanlines\n"
+            "Left Drag = Orbit Kamera  •  Scroll = Zoom\n"
+            "R = Reset Drone  •  ESC = Keluar"
         )
         lay.addWidget(lbl)
         return box
@@ -375,6 +387,10 @@ class MainWindow(QMainWindow):
         elif event.key() == Qt.Key_C:
             self.view.cycle_camera_mode()
             self._log(f"Kamera diganti ke mode: {self.view.camera_mode}")
+        elif event.key() == Qt.Key_T:
+            self._on_theme_btn_clicked()
+        elif event.key() == Qt.Key_L:
+            self._on_spotlight_btn_clicked()
         elif event.key() == Qt.Key_H:
             self.view.toggle_hud()
             self._log(f"HUD {'ditampilkan' if self.view.hud_visible else 'disembunyikan'}.")

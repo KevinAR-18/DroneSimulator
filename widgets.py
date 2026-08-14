@@ -1,5 +1,6 @@
 import math
 import random
+from collections import deque
 from PySide6.QtCore import Qt, QPointF, QRectF, Signal
 from PySide6.QtGui import (
     QColor,
@@ -22,13 +23,27 @@ class CameraMode:
     ALL = [CHASE, ORBIT, FPV, TOP_DOWN]
 
 
-# Color Tokens
-SKY_TOP = QColor(18, 36, 68)
-SKY_BOTTOM = QColor(120, 160, 205)
-GROUND_TOP = QColor(36, 68, 44)
-GROUND_BOTTOM = QColor(16, 34, 22)
-GRID_COLOR = QColor(70, 140, 90, 85)
-GRID_MAJOR_COLOR = QColor(0, 229, 255, 130)
+class EnvTheme:
+    DAY = "DAY"
+    SUNSET = "SUNSET"
+    NIGHT = "NIGHT"
+    ALL = [DAY, SUNSET, NIGHT]
+
+
+# Dark Carbon FPV Color Tokens
+COLOR_HULL = QColor(42, 46, 54)        # #2A2E36
+COLOR_CARBON = QColor(30, 34, 39)      # #1E2227
+COLOR_GUNMETAL = QColor(58, 64, 72)    # #3A4048
+COLOR_ACCENT_ORANGE = QColor(255, 140, 42)  # #FF8C2A
+COLOR_ACCENT_CYAN = QColor(53, 213, 240)    # #35D5F0
+
+# Environment Color Tokens
+SKY_TOP = QColor(16, 32, 58)
+SKY_BOTTOM = QColor(115, 155, 200)
+GROUND_TOP = QColor(34, 64, 40)
+GROUND_BOTTOM = QColor(15, 30, 20)
+GRID_COLOR = QColor(60, 130, 80, 80)
+GRID_MAJOR_COLOR = QColor(53, 213, 240, 130)
 
 
 class GroundParticle:
@@ -59,6 +74,7 @@ class SimView(QWidget):
     F = 550.0
 
     camera_mode_changed = Signal(str)
+    theme_changed = Signal(str)
 
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -67,17 +83,21 @@ class SimView(QWidget):
         self.strobe_timer = 0.0
         self.zoom = 1.0
         self.camera_mode = CameraMode.CHASE
+        self.env_theme = EnvTheme.DAY
 
         # Toggles
         self.hud_visible = True
         self.radar_visible = True
         self.osd_scanlines = True
+        self.spotlight_on = True
 
-        # Camera orientation
+        # Camera orientation & damping
         self.cam_az = math.pi / 2.0
         self.cam_elev = math.radians(40)
         self.orbit_az = math.pi / 2.0
         self.orbit_elev = math.radians(40)
+        self.orbit_vel_az = 0.0
+        self.orbit_vel_el = 0.0
         self.cam_shake_x = 0.0
         self.cam_shake_y = 0.0
 
@@ -85,8 +105,9 @@ class SimView(QWidget):
         self.is_dragging = False
         self.last_mouse_pos = QPointF()
 
-        # Dust particles
+        # Dust particles & history telemetry graph
         self.particles = []
+        self.telemetry_history = deque(maxlen=80)  # (alt, spd)
 
         # World Props: 3D Racing Gates (x, y, z, radius, heading_deg)
         self.racing_gates = [
@@ -100,6 +121,18 @@ class SimView(QWidget):
             {"pos": (12.0, -7.0), "h": 3.0, "r": 2.6, "name": "P1"},
             {"pos": (-11.0, -9.0), "h": 5.5, "r": 3.0, "name": "P2"},
         ]
+
+        # World Props: 3D Trees (x, y, height, radius)
+        self.trees = [
+            {"pos": (15.0, 12.0), "h": 4.5, "r": 1.6},
+            {"pos": (-14.0, 8.0), "h": 5.0, "r": 1.8},
+            {"pos": (18.0, -14.0), "h": 4.2, "r": 1.5},
+            {"pos": (-16.0, -16.0), "h": 5.2, "r": 1.9},
+            {"pos": (5.0, -18.0), "h": 4.0, "r": 1.4},
+        ]
+
+        # Wind Turbine at (-22, 22)
+        self.turbine_blade_angle = 0.0
 
         self.setMinimumSize(480, 360)
         self.setAutoFillBackground(False)
@@ -122,6 +155,17 @@ class SimView(QWidget):
         next_mode = CameraMode.ALL[(idx + 1) % len(CameraMode.ALL)]
         self.set_camera_mode(next_mode)
 
+    def cycle_theme(self):
+        idx = EnvTheme.ALL.index(self.env_theme)
+        next_theme = EnvTheme.ALL[(idx + 1) % len(EnvTheme.ALL)]
+        self.env_theme = next_theme
+        self.theme_changed.emit(self.env_theme)
+        self.update()
+
+    def toggle_spotlight(self):
+        self.spotlight_on = not self.spotlight_on
+        self.update()
+
     def toggle_hud(self):
         self.hud_visible = not self.hud_visible
         self.update()
@@ -137,7 +181,11 @@ class SimView(QWidget):
     # ------------------------------------------------------------------ Camera Advance & Physics Updates
     def advance_cam(self, dt):
         self.strobe_timer = (self.strobe_timer + dt) % 1.2
+        self.turbine_blade_angle = (self.turbine_blade_angle + 1.2 * dt) % (2.0 * math.pi)
         m = self.model
+
+        # Record telemetry history
+        self.telemetry_history.append((m.z, m.speed()))
 
         # Update Dust Particles
         if m.armed and m.z < 1.2 and m.rotor_speed > 0.1:
@@ -174,6 +222,12 @@ class SimView(QWidget):
             self.cam_elev += (target_elev - self.cam_elev) * k_el
 
         elif self.camera_mode == CameraMode.ORBIT:
+            if not self.is_dragging:
+                self.orbit_az += self.orbit_vel_az * dt
+                self.orbit_elev = max(math.radians(5), min(math.radians(88), self.orbit_elev + self.orbit_vel_el * dt))
+                self.orbit_vel_az *= 0.92
+                self.orbit_vel_el *= 0.92
+
             self.cam_az = self.orbit_az
             self.cam_elev = self.orbit_elev
 
@@ -196,6 +250,8 @@ class SimView(QWidget):
         if event.button() == Qt.LeftButton:
             self.is_dragging = True
             self.last_mouse_pos = event.position()
+            self.orbit_vel_az = 0.0
+            self.orbit_vel_el = 0.0
             event.accept()
 
     def mouseMoveEvent(self, event):
@@ -206,6 +262,9 @@ class SimView(QWidget):
             self.last_mouse_pos = pos
 
             sensitivity = 0.007
+            self.orbit_vel_az = -dx * 0.5
+            self.orbit_vel_el = dy * 0.5
+
             self.orbit_az -= dx * sensitivity
             self.orbit_elev = max(math.radians(5), min(math.radians(88), self.orbit_elev + dy * sensitivity))
 
@@ -279,15 +338,11 @@ class SimView(QWidget):
         cy = self.height() * (0.50 if self.camera_mode == CameraMode.TOP_DOWN else 0.55) + self.cam_shake_y
 
         if self.camera_mode == CameraMode.FPV:
-            depth = ze
-            if depth < 0.1:
-                depth = 0.1
+            depth = max(0.15, ze)
             return QPointF(cx + (xa * self.F) / depth, cy - (ye * self.F) / depth)
         else:
             d = self._cam_dist()
-            denom = d - ze
-            if denom < 0.15:
-                denom = 0.15
+            denom = max(0.15, d - ze)
             return QPointF(cx + (xa * self.F) / denom, cy - (ye * self.F) / denom)
 
     def _project_3d(self, p):
@@ -297,7 +352,7 @@ class SimView(QWidget):
 
         if self.camera_mode == CameraMode.FPV:
             depth = ze
-            if depth < 0.08:
+            if depth < 0.15:
                 return None, depth
             return QPointF(cx + (xa * self.F) / depth, cy - (ye * self.F) / depth), depth
         else:
@@ -363,13 +418,20 @@ class SimView(QWidget):
         w, h = self.width(), self.height()
 
         self._draw_environment(painter, w, h)
+        if self.env_theme != EnvTheme.NIGHT:
+            self._draw_clouds(painter, w, h)
+        else:
+            self._draw_stars(painter, w, h)
+
         self._draw_grid(painter)
         self._draw_helipad(painter)
         self._draw_elevated_helipads(painter)
         self._draw_racing_gates(painter)
+        self._draw_trees_and_props(painter)
         self._draw_dust_particles(painter)
         self._draw_trail(painter)
         self._draw_shadow(painter)
+        self._draw_spotlight_beam(painter)
         self._draw_prop_wash(painter)
 
         if self.camera_mode != CameraMode.FPV:
@@ -377,19 +439,25 @@ class SimView(QWidget):
         else:
             self._draw_fpv_osd(painter, w, h)
 
+        # Dynamic Speed Lines & Alerts
+        self._draw_speed_lines(painter, w, h)
+        self._draw_battery_alert(painter, w, h)
+
         if self.hud_visible and self.camera_mode != CameraMode.FPV:
             self._draw_labels(painter)
+            self._draw_telemetry_chart(painter, w, h)
             self._draw_hud(painter, w, h)
 
         if self.radar_visible:
             self._draw_radar(painter, w, h)
 
         # Border Frame
-        painter.setPen(QPen(QColor(0, 229, 255, 120), 2))
+        border_col = COLOR_ACCENT_CYAN if self.env_theme != EnvTheme.SUNSET else COLOR_ACCENT_ORANGE
+        painter.setPen(QPen(border_col, 1.5))
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(1, 1, w - 2, h - 2, 10, 10)
 
-    # ------------------------------------------------------------------ Environment
+    # ------------------------------------------------------------------ Environment & Themes
     def _draw_environment(self, painter, w, h):
         if self.camera_mode == CameraMode.FPV:
             horizon_pitch = math.degrees(self.model.pitch) * 4.0
@@ -406,29 +474,80 @@ class SimView(QWidget):
 
         hy = max(-h * 2, min(h * 3, horizon_y))
 
-        # Sky
+        # Palette by Theme
+        if self.env_theme == EnvTheme.DAY:
+            sky_top, sky_bot = SKY_TOP, SKY_BOTTOM
+            gnd_top, gnd_bot = GROUND_TOP, GROUND_BOTTOM
+            sun_col = QColor(255, 255, 230, 230)
+        elif self.env_theme == EnvTheme.SUNSET:
+            sky_top, sky_bot = QColor(45, 20, 60), QColor(235, 120, 70)
+            gnd_top, gnd_bot = QColor(48, 42, 32), QColor(24, 20, 16)
+            sun_col = QColor(255, 180, 80, 240)
+        else:  # NIGHT
+            sky_top, sky_bot = QColor(6, 8, 16), QColor(18, 24, 38)
+            gnd_top, gnd_bot = QColor(12, 18, 16), QColor(6, 10, 8)
+            sun_col = QColor(210, 235, 255, 190)  # Moon
+
+        # Sky Linear Gradient
         sky = QLinearGradient(0, 0, 0, max(hy, 1))
-        sky.setColorAt(0.0, SKY_TOP)
-        sky.setColorAt(1.0, SKY_BOTTOM)
+        sky.setColorAt(0.0, sky_top)
+        sky.setColorAt(1.0, sky_bot)
         painter.fillRect(0, 0, w, max(0, int(hy)), sky)
 
-        # Sun Glow & Lens Flare
+        # Sun / Moon Glow
         if hy > 10:
             sun_x = w * 0.75
             sun_y = min(hy * 0.45, h * 0.35)
             sun_grad = QRadialGradient(QPointF(sun_x, sun_y), 130)
-            sun_grad.setColorAt(0.0, QColor(255, 255, 230, 230))
-            sun_grad.setColorAt(0.35, QColor(255, 210, 130, 110))
-            sun_grad.setColorAt(1.0, QColor(255, 190, 100, 0))
+            sun_grad.setColorAt(0.0, sun_col)
+            sun_grad.setColorAt(0.35, QColor(sun_col.red(), sun_col.green(), sun_col.blue(), 100))
+            sun_grad.setColorAt(1.0, QColor(sun_col.red(), sun_col.green(), sun_col.blue(), 0))
             painter.setPen(Qt.NoPen)
             painter.setBrush(sun_grad)
             painter.drawEllipse(QPointF(sun_x, sun_y), 130, 130)
 
-        # Ground
+        # Ground Linear Gradient
         ground = QLinearGradient(0, hy, 0, h)
-        ground.setColorAt(0.0, GROUND_TOP)
-        ground.setColorAt(1.0, GROUND_BOTTOM)
+        ground.setColorAt(0.0, gnd_top)
+        ground.setColorAt(1.0, gnd_bot)
         painter.fillRect(0, max(0, int(hy)), w, max(0, h - int(hy)), ground)
+
+        # Horizon Fog Band
+        fog_band_h = 36
+        if 0 < hy < h + fog_band_h:
+            fog = QLinearGradient(0, hy - fog_band_h / 2, 0, hy + fog_band_h / 2)
+            fog.setColorAt(0.0, QColor(sky_bot.red(), sky_bot.green(), sky_bot.blue(), 0))
+            fog.setColorAt(0.5, QColor(sky_bot.red(), sky_bot.green(), sky_bot.blue(), 80))
+            fog.setColorAt(1.0, QColor(gnd_top.red(), gnd_top.green(), gnd_top.blue(), 0))
+            painter.fillRect(0, max(0, int(hy - fog_band_h / 2)), w, fog_band_h, fog)
+
+    def _draw_clouds(self, painter, w, h):
+        t = self.model.time * 0.04
+        painter.setPen(Qt.NoPen)
+        for i, (base_x, base_y, rw, rh) in enumerate([
+            (0.2, 0.18, 90, 26),
+            (0.55, 0.28, 120, 32),
+            (0.85, 0.15, 80, 22),
+            (-0.15, 0.22, 100, 28)
+        ]):
+            cx = ((base_x + t * (0.5 + i * 0.2)) % 1.4 - 0.2) * w
+            cy = base_y * h * 0.75
+            c_grad = QRadialGradient(QPointF(cx, cy), rw)
+            c_grad.setColorAt(0.0, QColor(255, 255, 255, 40))
+            c_grad.setColorAt(0.7, QColor(240, 248, 255, 20))
+            c_grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            painter.setBrush(c_grad)
+            painter.drawEllipse(QPointF(cx, cy), rw, rh)
+
+    def _draw_stars(self, painter, w, h):
+        # Twinkling stars at night
+        painter.setPen(Qt.NoPen)
+        for i in range(35):
+            sx = (i * 97 + 13) % w
+            sy = (i * 61 + 7) % int(h * 0.45)
+            twinkle = int(140 + 100 * math.sin(self.model.time * 3.0 + i))
+            painter.setBrush(QColor(220, 240, 255, twinkle))
+            painter.drawEllipse(QPointF(sx, sy), 1.5, 1.5)
 
     def _draw_grid(self, painter):
         ext = self._visible_ground_extent()
@@ -443,13 +562,11 @@ class SimView(QWidget):
         step = next((s for s in steps if span / s <= 50), steps[-1])
         major = max(1, int(round(5.0 / step)))
 
+        grid_col = GRID_COLOR if self.env_theme != EnvTheme.NIGHT else QColor(30, 80, 70, 70)
+        grid_maj = GRID_MAJOR_COLOR if self.env_theme != EnvTheme.SUNSET else COLOR_ACCENT_ORANGE
+
         def draw_line(ax, ay, bx, by, is_major):
-            painter.setPen(
-                QPen(
-                    GRID_MAJOR_COLOR if is_major else GRID_COLOR,
-                    2 if is_major else 1,
-                )
-            )
+            painter.setPen(QPen(grid_maj if is_major else grid_col, 2 if is_major else 1))
             subdivs = 4
             for f in range(subdivs):
                 p1 = self._project_or_none(
@@ -493,8 +610,8 @@ class SimView(QWidget):
             pts_outer.append(p_out)
             pts_inner.append(p_in)
 
-        painter.setPen(QPen(QColor(0, 229, 255, 230), 2))
-        painter.setBrush(QColor(25, 32, 42, 170))
+        painter.setPen(QPen(COLOR_ACCENT_CYAN, 2))
+        painter.setBrush(QColor(24, 28, 36, 190))
         painter.drawPolygon(QPolygonF(pts_outer))
 
         painter.setPen(QPen(QColor(255, 255, 255, 230), 2))
@@ -508,18 +625,25 @@ class SimView(QWidget):
         hpm1 = self.project((-0.8, 0.0, 0.0))
         hpm2 = self.project((0.8, 0.0, 0.0))
 
-        painter.setPen(QPen(QColor(255, 215, 60, 240), 4, Qt.SolidLine, Qt.SquareCap))
+        painter.setPen(QPen(COLOR_ACCENT_ORANGE, 4, Qt.SolidLine, Qt.SquareCap))
         painter.drawLine(hp1, hp2)
         painter.drawLine(hp3, hp4)
         painter.drawLine(hpm1, hpm2)
 
+        ch1 = self.project((0.0, 1.6, 0.0))
+        ch2 = self.project((-0.5, 2.0, 0.0))
+        ch3 = self.project((0.5, 2.0, 0.0))
+        painter.setPen(QPen(COLOR_ACCENT_ORANGE, 2))
+        painter.drawLine(ch1, ch2)
+        painter.drawLine(ch1, ch3)
+
         l_pt = self.project((0.0, -3.2, 0.0))
         if self._visible(l_pt):
             painter.setFont(QFont("Consolas", 10, QFont.Bold))
-            painter.setPen(QColor(0, 229, 255, 240))
+            painter.setPen(COLOR_ACCENT_CYAN)
             painter.drawText(l_pt.x() - 32, l_pt.y() + 4, "HOME [0,0]")
 
-    # ------------------------------------------------------------------ 3D Elevated Helipads & Racing Gates
+    # ------------------------------------------------------------------ 3D Elevated Helipads, Racing Gates, & Props
     def _draw_elevated_helipads(self, painter):
         for pad in self.elevated_helipads:
             px, py = pad["pos"]
@@ -527,30 +651,27 @@ class SimView(QWidget):
             pr = pad["r"]
             pname = pad["name"]
 
-            # Pillar Support (4 3D legs)
             for leg_x, leg_y in [(-pr * 0.7, -pr * 0.7), (pr * 0.7, -pr * 0.7), (pr * 0.7, pr * 0.7), (-pr * 0.7, pr * 0.7)]:
                 p_bot = self.project((px + leg_x, py + leg_y, 0.0))
                 p_top = self.project((px + leg_x, py + leg_y, ph))
                 if self._visible(p_bot) and self._visible(p_top):
-                    painter.setPen(QPen(QColor(60, 70, 85, 200), 3))
+                    painter.setPen(QPen(QColor(50, 58, 70, 220), 3))
                     painter.drawLine(p_bot, p_top)
 
-            # Top Octagon Pad
             pts_top = []
             for i in range(8):
                 ang = i * (2.0 * math.pi / 8.0)
                 pt = self.project((px + math.cos(ang) * pr, py + math.sin(ang) * pr, ph))
                 pts_top.append(pt)
 
-            painter.setPen(QPen(QColor(255, 190, 40, 230), 2))
-            painter.setBrush(QColor(30, 38, 48, 210))
+            painter.setPen(QPen(COLOR_ACCENT_ORANGE, 2))
+            painter.setBrush(QColor(28, 34, 42, 220))
             painter.drawPolygon(QPolygonF(pts_top))
 
-            # Pad Name Label
             lbl_pt = self.project((px, py, ph + 0.1))
             if self._visible(lbl_pt):
                 painter.setFont(QFont("Consolas", 10, QFont.Bold))
-                painter.setPen(QColor(255, 220, 60))
+                painter.setPen(COLOR_ACCENT_ORANGE)
                 painter.drawText(lbl_pt.x() - 10, lbl_pt.y() + 4, pname)
 
     def _draw_racing_gates(self, painter):
@@ -560,7 +681,6 @@ class SimView(QWidget):
             gyaw = gate["yaw"]
             is_passed = gate["passed"]
 
-            # Gate Ring Points in 3D
             ring_pts = []
             num_sides = 12
             for i in range(num_sides):
@@ -569,7 +689,6 @@ class SimView(QWidget):
                 ly = math.cos(ang) * gr
                 lz = math.sin(ang) * gr
 
-                # Rotate around Z by gyaw
                 wx = gx + lx * math.cos(gyaw) - ly * math.sin(gyaw)
                 wy = gy + lx * math.sin(gyaw) + ly * math.cos(gyaw)
                 wz = gz + lz
@@ -577,27 +696,114 @@ class SimView(QWidget):
                 pt = self.project((wx, wy, wz))
                 ring_pts.append(pt)
 
-            # Ring Glow Color
-            c_neon = QColor(60, 250, 160, 240) if is_passed else QColor(255, 0, 180, 230)
+            c_neon = QColor(60, 250, 160, 240) if is_passed else QColor(255, 40, 180, 230)
             painter.setPen(QPen(c_neon, 4 if is_passed else 3, Qt.SolidLine, Qt.RoundCap))
             painter.setBrush(Qt.NoBrush)
             painter.drawPolygon(QPolygonF(ring_pts))
 
-            # Ground Post Pole
             p_bot = self.project((gx, gy, 0.0))
             p_center = self.project((gx, gy, gz - gr))
             if self._visible(p_bot) and self._visible(p_center):
-                painter.setPen(QPen(QColor(80, 90, 110, 220), 3))
+                painter.setPen(QPen(QColor(70, 80, 95, 220), 3))
                 painter.drawLine(p_bot, p_center)
 
-            # Gate Number Label
             lbl_pt = self.project((gx, gy, gz + gr + 0.3))
             if self._visible(lbl_pt):
                 painter.setFont(QFont("Consolas", 9, QFont.Bold))
                 painter.setPen(c_neon)
                 painter.drawText(lbl_pt.x() - 20, lbl_pt.y(), f"GATE {idx+1}")
 
-    # ------------------------------------------------------------------ Dust Particles
+    def _draw_trees_and_props(self, painter):
+        # 3D Low-Poly Pine Trees
+        for tree in self.trees:
+            tx, ty = tree["pos"]
+            th = tree["h"]
+            tr = tree["r"]
+
+            # Trunk
+            p_base = self.project((tx, ty, 0.0))
+            p_mid = self.project((tx, ty, th * 0.3))
+            if self._visible(p_base) and self._visible(p_mid):
+                painter.setPen(QPen(QColor(70, 50, 35), 4))
+                painter.drawLine(p_base, p_mid)
+
+            # Cone Foliage 1 (Lower)
+            pts_c1 = []
+            for i in range(6):
+                ang = i * (2.0 * math.pi / 6.0)
+                pts_c1.append(self.project((tx + math.cos(ang) * tr, ty + math.sin(ang) * tr, th * 0.3)))
+            p_tip1 = self.project((tx, ty, th * 0.7))
+            if self._visible(p_tip1):
+                painter.setPen(QPen(QColor(30, 75, 45), 1))
+                painter.setBrush(QColor(40, 95, 55))
+                painter.drawPolygon(QPolygonF(pts_c1))
+
+            # Cone Foliage 2 (Upper)
+            pts_c2 = []
+            for i in range(6):
+                ang = i * (2.0 * math.pi / 6.0)
+                pts_c2.append(self.project((tx + math.cos(ang) * tr * 0.7, ty + math.sin(ang) * tr * 0.7, th * 0.6)))
+            p_top = self.project((tx, ty, th))
+            if self._visible(p_top):
+                painter.setPen(QPen(QColor(40, 95, 55), 1))
+                painter.setBrush(QColor(55, 125, 75))
+                painter.drawPolygon(QPolygonF(pts_c2))
+
+        # 3D Wind Turbine at (-22, 22)
+        wx, wy, wh = -22.0, 22.0, 10.0
+        p_tbase = self.project((wx, wy, 0.0))
+        p_thub = self.project((wx, wy, wh))
+        if self._visible(p_tbase) and self._visible(p_thub):
+            painter.setPen(QPen(QColor(180, 190, 205), 4))
+            painter.drawLine(p_tbase, p_thub)
+
+            # 3 Rotating Turbine Blades
+            for b in range(3):
+                ang = self.turbine_blade_angle + b * (2.0 * math.pi / 3.0)
+                btip = self.project((wx + math.cos(ang) * 4.0, wy, wh + math.sin(ang) * 4.0))
+                painter.setPen(QPen(QColor(230, 240, 250), 2.5))
+                painter.drawLine(p_thub, btip)
+
+    # ------------------------------------------------------------------ 3D Spotlight Beam & Dust
+    def _draw_spotlight_beam(self, painter):
+        m = self.model
+        if not self.spotlight_on:
+            return
+
+        nose_world = (m.x + math.cos(m.yaw) * 0.35, m.y + math.sin(m.yaw) * 0.35, m.z + 0.15)
+        nose_pt = self.project(nose_world)
+
+        # Ground Light Pool Center
+        target_dist = 3.2
+        target_gnd = (m.x + math.cos(m.yaw) * target_dist, m.y + math.sin(m.yaw) * target_dist, 0.0)
+        gnd_pt = self.project(target_gnd)
+
+        if not self._visible(gnd_pt):
+            return
+
+        # Ground Pool Ellipse
+        r_pool = 32.0 * math.sqrt(self.zoom)
+        pool_grad = QRadialGradient(gnd_pt, r_pool)
+        pool_grad.setColorAt(0.0, QColor(255, 255, 230, 140))
+        pool_grad.setColorAt(0.6, QColor(255, 255, 200, 60))
+        pool_grad.setColorAt(1.0, QColor(255, 255, 200, 0))
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(pool_grad)
+        painter.drawEllipse(gnd_pt, r_pool, r_pool * 0.5)
+
+        # 3D Beam Cone (from nose to ground pool)
+        if self._visible(nose_pt):
+            beam_pts = [
+                nose_pt,
+                QPointF(gnd_pt.x() - r_pool * 0.7, gnd_pt.y()),
+                QPointF(gnd_pt.x() + r_pool * 0.7, gnd_pt.y()),
+            ]
+            beam_grad = QLinearGradient(nose_pt, gnd_pt)
+            beam_grad.setColorAt(0.0, QColor(255, 255, 230, 90))
+            beam_grad.setColorAt(1.0, QColor(255, 255, 200, 15))
+            painter.setBrush(beam_grad)
+            painter.drawPolygon(QPolygonF(beam_pts))
+
     def _draw_dust_particles(self, painter):
         for p in self.particles:
             pt = self.project((p.x, p.y, p.z))
@@ -621,7 +827,7 @@ class SimView(QWidget):
         for i in range(n - 1):
             alpha = int(40 + 190 * (i / n))
             w = max(1.5, 4.0 * (i / n) * math.sqrt(self.zoom))
-            painter.setPen(QPen(QColor(0, 229, 255, alpha), w, Qt.SolidLine, Qt.RoundCap))
+            painter.setPen(QPen(QColor(COLOR_ACCENT_ORANGE.red(), COLOR_ACCENT_ORANGE.green(), COLOR_ACCENT_ORANGE.blue(), alpha), w, Qt.SolidLine, Qt.RoundCap))
             painter.drawLine(pts[i], pts[i + 1])
 
     def _draw_shadow(self, painter):
@@ -630,8 +836,8 @@ class SimView(QWidget):
             return
 
         painter.setPen(Qt.NoPen)
-        r = (28.0 / (1.0 + self.model.z * 0.12)) * math.sqrt(self.zoom)
-        alpha = int(max(15, 110 / (1.0 + self.model.z * 0.2)))
+        r = (30.0 / (1.0 + self.model.z * 0.12)) * math.sqrt(self.zoom)
+        alpha = int(max(15, 120 / (1.0 + self.model.z * 0.2)))
 
         shadow_grad = QRadialGradient(shadow, max(4.0, r))
         shadow_grad.setColorAt(0.0, QColor(0, 0, 0, alpha))
@@ -668,17 +874,17 @@ class SimView(QWidget):
         m = self.model
         yaw, pitch, roll = m.yaw, m.pitch, m.roll
 
-        y1 = y * math.cos(roll) - z * math.sin(roll)
-        z1 = y * math.sin(roll) + z * math.cos(roll)
-        x1 = x
+        x1 = x * math.cos(yaw) - y * math.sin(yaw)
+        y1 = x * math.sin(yaw) + y * math.cos(yaw)
+        z1 = z
 
-        x2 = x1 * math.cos(pitch) + z1 * math.sin(pitch)
-        z2 = -x1 * math.sin(pitch) + z1 * math.cos(pitch)
-        y2 = y1
+        y2 = y1 * math.cos(roll) - z1 * math.sin(roll)
+        z2 = y1 * math.sin(roll) + z1 * math.cos(roll)
+        x2 = x1
 
-        xw = x2 * math.cos(yaw) - y2 * math.sin(yaw)
-        yw = x2 * math.sin(yaw) + y2 * math.cos(yaw)
-        zw = z2
+        xw = x2 * math.cos(pitch) + z2 * math.sin(pitch)
+        yw = y2
+        zw = -x2 * math.sin(pitch) + z2 * math.cos(pitch)
 
         return (m.x + xw, m.y + yw, m.z + 0.15 + zw)
 
@@ -686,7 +892,14 @@ class SimView(QWidget):
         m = self.model
         self.rotor_phase += 0.7 + m.rotor_speed * 2.8
 
-        lx, ly, lz = 0.5, -0.4, 0.76
+        # Directional light vector by theme
+        if self.env_theme == EnvTheme.DAY:
+            lx, ly, lz = 0.45, -0.35, 0.85
+        elif self.env_theme == EnvTheme.SUNSET:
+            lx, ly, lz = 0.75, -0.20, 0.35
+        else:
+            lx, ly, lz = 0.20, -0.20, 0.90
+
         l_len = math.hypot(lx, math.hypot(ly, lz))
         lx, ly, lz = lx / l_len, ly / l_len, lz / l_len
 
@@ -698,7 +911,7 @@ class SimView(QWidget):
             avg_depth = sum(c[2] for c in cam_verts) / len(cam_verts)
 
             v0, v1, v2 = world_verts[0], world_verts[1], world_verts[2]
-            e1 = (v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2])
+            e1 = (v1[0] - v0[0], v1[1] - v0[0], v1[2] - v0[2])
             e2 = (v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2])
             nx = e1[1] * e2[2] - e1[2] * e2[1]
             ny = e1[2] * e2[0] - e1[0] * e2[2]
@@ -710,22 +923,29 @@ class SimView(QWidget):
                 nx, ny, nz = 0.0, 0.0, 1.0
 
             dot = max(0.0, nx * lx + ny * ly + nz * lz)
-            ambient = 0.35
-            diffuse = 0.65 * dot
+            ambient = 0.45
+            diffuse = 0.55 * dot
 
-            r = int(min(255, base_color.red() * (ambient + diffuse)))
-            g = int(min(255, base_color.green() * (ambient + diffuse)))
-            b = int(min(255, base_color.blue() * (ambient + diffuse)))
+            specular = 0.0
+            if is_shiny:
+                rx = 2.0 * dot * nx - lx
+                ry = 2.0 * dot * ny - ly
+                rz = 2.0 * dot * nz - lz
+                specular = max(0.0, rz) ** 14 * 0.45
+
+            r = int(min(255, base_color.red() * (ambient + diffuse) + 255 * specular))
+            g = int(min(255, base_color.green() * (ambient + diffuse) + 255 * specular))
+            b = int(min(255, base_color.blue() * (ambient + diffuse) + 255 * specular))
             color = QColor(r, g, b, base_color.alpha())
 
             screen_pts = [self.project(w) for w in world_verts]
             facets.append((avg_depth, screen_pts, color, is_shiny))
 
         arm_endpoints = [
-            (0.707, 0.707, 0.0),
-            (0.707, -0.707, 0.0),
-            (-0.707, 0.707, 0.0),
-            (-0.707, -0.707, 0.0),
+            (0.707, 0.707, 0.0),    # FR
+            (0.707, -0.707, 0.0),   # FL
+            (-0.707, 0.707, 0.0),   # RR
+            (-0.707, -0.707, 0.0),  # RL
         ]
 
         w_arm = 0.06
@@ -735,7 +955,7 @@ class SimView(QWidget):
             ux, uy = ex / length, ey / length
             px, py = -uy, ux
 
-            c_arm = QColor(70, 75, 85) if idx < 2 else QColor(50, 55, 62)
+            c_arm = COLOR_CARBON if idx >= 2 else COLOR_GUNMETAL
 
             add_polygon([
                 (0.0 + px * w_arm, 0.0 + py * w_arm, h_arm),
@@ -749,7 +969,7 @@ class SimView(QWidget):
                 (ex + px * w_arm, ey + py * w_arm, -h_arm),
                 (ex - px * w_arm, ey - py * w_arm, -h_arm),
                 (ex - px * w_arm, ey - py * w_arm, h_arm),
-            ], QColor(40, 44, 50))
+            ], COLOR_HULL)
 
             if idx < 2:
                 add_polygon([
@@ -757,31 +977,48 @@ class SimView(QWidget):
                     (ex * 0.8 + px * w_arm * 1.05, ey * 0.8 + py * w_arm * 1.05, h_arm * 1.05),
                     (ex * 0.8 - px * w_arm * 1.05, ey * 0.8 - py * w_arm * 1.05, h_arm * 1.05),
                     (ex * 0.6 - px * w_arm * 1.05, ey * 0.6 - py * w_arm * 1.05, h_arm * 1.05),
-                ], QColor(0, 229, 255))
+                ], COLOR_ACCENT_ORANGE)
 
-        bat_color = QColor(35, 38, 44)
+            add_polygon([
+                (ex - 0.03, ey - 0.03, -h_arm), (ex + 0.03, ey - 0.03, -h_arm),
+                (ex + 0.03, ey + 0.03, -h_arm - 0.12), (ex - 0.03, ey + 0.03, -h_arm - 0.12)
+            ], COLOR_CARBON)
+
         add_polygon([
             (0.20, -0.10, -0.08), (0.20, 0.10, -0.08),
             (-0.25, 0.10, -0.08), (-0.25, -0.10, -0.08)
-        ], bat_color)
+        ], COLOR_HULL)
 
-        c_top = QColor(110, 122, 138)
-        c_side = QColor(70, 78, 90)
-        c_front = QColor(140, 155, 175)
+        add_polygon([
+            (0.20, 0.10, -0.01), (0.20, 0.10, -0.08),
+            (0.20, -0.10, -0.08), (0.20, -0.10, -0.01)
+        ], COLOR_GUNMETAL)
+
+        add_polygon([
+            (0.04, -0.102, -0.082), (0.04, 0.102, -0.082),
+            (-0.06, 0.102, -0.082), (-0.06, -0.102, -0.082)
+        ], COLOR_ACCENT_ORANGE)
+
+        c_top = COLOR_GUNMETAL
+        c_side = COLOR_HULL
+        c_front = QColor(100, 112, 128)
 
         add_polygon([(0.42, 0.0, 0.04), (0.18, 0.15, 0.08), (0.18, 0.0, 0.14)], c_front, True)
         add_polygon([(0.42, 0.0, 0.04), (0.18, 0.0, 0.14), (0.18, -0.15, 0.08)], c_front, True)
         add_polygon([(0.18, 0.15, 0.08), (-0.25, 0.14, 0.07), (0.0, 0.0, 0.16), (0.18, 0.0, 0.14)], c_top, True)
         add_polygon([(0.18, 0.0, 0.14), (0.0, 0.0, 0.16), (-0.25, -0.14, 0.07), (0.18, -0.15, 0.08)], c_top, True)
+        add_polygon([(0.0, 0.0, 0.16), (-0.35, 0.0, 0.05), (-0.25, 0.14, 0.07)], c_side)
+        add_polygon([(0.0, 0.0, 0.16), (-0.25, -0.14, 0.07), (-0.35, 0.0, 0.05)], c_side)
 
         add_polygon([
             (0.38, -0.06, 0.02), (0.38, 0.06, 0.02),
             (0.38, 0.06, -0.05), (0.38, -0.06, -0.05)
-        ], QColor(30, 32, 38))
+        ], COLOR_CARBON)
+
         add_polygon([
             (0.40, -0.04, 0.01), (0.40, 0.04, 0.01),
             (0.40, 0.04, -0.03), (0.40, -0.04, -0.03)
-        ], QColor(0, 229, 255), True)
+        ], COLOR_ACCENT_CYAN, True)
 
         r_m = 0.11
         h_m = 0.08
@@ -789,13 +1026,13 @@ class SimView(QWidget):
             add_polygon([
                 (ex + r_m, ey, ez + h_m), (ex, ey + r_m, ez + h_m),
                 (ex - r_m, ey, ez + h_m), (ex, ey - r_m, ez + h_m)
-            ], QColor(50, 56, 66))
+            ], COLOR_GUNMETAL)
 
         facets.sort(key=lambda item: item[0], reverse=True)
 
         for depth, screen_pts, color, is_shiny in facets:
             poly = QPolygonF(screen_pts)
-            painter.setPen(QPen(QColor(20, 24, 30, 140), 1))
+            painter.setPen(QPen(QColor(15, 18, 22, 140), 1))
             painter.setBrush(color)
             painter.drawPolygon(poly)
 
@@ -827,19 +1064,19 @@ class SimView(QWidget):
                 if m.rotor_speed > 0.05:
                     painter.setPen(QPen(QColor(245, 248, 252, 210), max(1.8, 2.5 * math.sqrt(self.zoom)), Qt.SolidLine, Qt.RoundCap))
                 else:
-                    painter.setPen(QPen(QColor(60, 65, 75, 230), max(2.0, 3.0 * math.sqrt(self.zoom)), Qt.SolidLine, Qt.RoundCap))
+                    painter.setPen(QPen(COLOR_CARBON, max(2.0, 3.0 * math.sqrt(self.zoom)), Qt.SolidLine, Qt.RoundCap))
                 painter.drawLine(pt_m, pt_tip)
 
             painter.setPen(QPen(QColor(20, 24, 30), 1))
-            painter.setBrush(QColor(210, 220, 230))
+            painter.setBrush(QColor(220, 230, 240))
             painter.drawEllipse(pt_m, 3.0, 3.0)
 
         is_strobe_on = self.strobe_timer > 0.95
         led_data = [
             (arm_endpoints[0], QColor(60, 240, 110), "FRONT_RIGHT"),
-            (arm_endpoints[1], QColor(0, 229, 255), "FRONT_LEFT"),
-            (arm_endpoints[2], QColor(255, 60, 60), "REAR_RIGHT"),
-            (arm_endpoints[3], QColor(255, 140, 40), "REAR_LEFT"),
+            (arm_endpoints[1], QColor(255, 255, 255), "FRONT_LEFT"),
+            (arm_endpoints[2], QColor(255, 50, 50), "REAR_RIGHT"),
+            (arm_endpoints[3], QColor(255, 50, 50), "REAR_LEFT"),
         ]
 
         for (ex, ey, ez), color, name in led_data:
@@ -865,40 +1102,114 @@ class SimView(QWidget):
             painter.setBrush(QColor(255, 255, 255) if m.armed else active_color)
             painter.drawEllipse(l_pt, 3.0, 3.0)
 
+        tail_world = self._world((-0.38, 0.0, 0.06))
+        tail_pt = self.project(tail_world)
+        if self._visible(tail_pt):
+            strobe_col = QColor(255, 255, 255) if is_strobe_on else QColor(80, 80, 90)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(strobe_col)
+            painter.drawEllipse(tail_pt, 2.5, 2.5)
+
+    # ------------------------------------------------------------------ Dynamic Speed Lines & Alerts
+    def _draw_speed_lines(self, painter, w, h):
+        spd = self.model.speed()
+        if spd < 6.5:
+            return
+
+        intensity = min(1.0, (spd - 6.5) / 8.0)
+        num_lines = int(12 * intensity)
+        cx, cy = w / 2.0, h / 2.0
+
+        painter.setPen(QPen(QColor(255, 255, 255, int(70 * intensity)), 1.5))
+        for i in range(num_lines):
+            ang = random.uniform(0, 2.0 * math.pi)
+            r1 = min(w, h) * random.uniform(0.38, 0.45)
+            r2 = min(w, h) * random.uniform(0.55, 0.65)
+            p1 = QPointF(cx + math.cos(ang) * r1, cy + math.sin(ang) * r1)
+            p2 = QPointF(cx + math.cos(ang) * r2, cy + math.sin(ang) * r2)
+            painter.drawLine(p1, p2)
+
+    def _draw_battery_alert(self, painter, w, h):
+        m = self.model
+        if m.battery < 20.0:
+            pulse = int(120 * (0.5 + 0.5 * math.sin(self.model.time * 6.0)))
+            painter.setPen(QPen(QColor(239, 68, 68, pulse), 4))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(3, 3, w - 6, h - 6, 8, 8)
+
+        # Ground Proximity / Descent Alarm
+        if m.z < 1.4 and m.vz < -2.0 and m.armed:
+            painter.setFont(QFont("Consolas", 12, QFont.Bold))
+            painter.setPen(QColor(255, 50, 50, 230))
+            painter.drawText(QRectF(0, h * 0.35, w, 24), Qt.AlignCenter, "⚠ WARNING: LOW ALTITUDE / PULL UP ⚠")
+
+    # ------------------------------------------------------------------ Telemetry Trend Graph
+    def _draw_telemetry_chart(self, painter, w, h):
+        if len(self.telemetry_history) < 2:
+            return
+
+        gw, gh = 150, 48
+        gx, gy = 8, h - 84
+        self._panel(painter, QRectF(gx, gy, gw, gh), 150, 6)
+
+        painter.setFont(QFont("Consolas", 7, QFont.Bold))
+        painter.setPen(COLOR_ACCENT_CYAN)
+        painter.drawText(gx + 6, gy + 11, "ALT (m)")
+        painter.setPen(COLOR_ACCENT_ORANGE)
+        painter.drawText(gx + gw - 46, gy + 11, "SPD (m/s)")
+
+        # Sparklines
+        n = len(self.telemetry_history)
+        step = (gw - 12) / max(1, n - 1)
+        max_alt = 20.0
+        max_spd = 15.0
+
+        pts_alt = []
+        pts_spd = []
+        for i, (alt, spd) in enumerate(self.telemetry_history):
+            px = gx + 6 + i * step
+            py_alt = gy + gh - 4 - max(0.0, min(1.0, alt / max_alt)) * (gh - 18)
+            py_spd = gy + gh - 4 - max(0.0, min(1.0, spd / max_spd)) * (gh - 18)
+            pts_alt.append(QPointF(px, py_alt))
+            pts_spd.append(QPointF(px, py_spd))
+
+        painter.setPen(QPen(COLOR_ACCENT_CYAN, 1.5))
+        for i in range(len(pts_alt) - 1):
+            painter.drawLine(pts_alt[i], pts_alt[i + 1])
+
+        painter.setPen(QPen(COLOR_ACCENT_ORANGE, 1.5))
+        for i in range(len(pts_spd) - 1):
+            painter.drawLine(pts_spd[i], pts_spd[i + 1])
+
     # ------------------------------------------------------------------ FPV Betaflight OSD Overlay
     def _draw_fpv_osd(self, painter, w, h):
         m = self.model
         cx, cy = w / 2.0, h / 2.0
 
-        # Scanlines option
         if self.osd_scanlines:
             painter.setPen(QPen(QColor(0, 0, 0, 22), 1))
             for y in range(0, h, 4):
                 painter.drawLine(0, y, w, y)
 
         # Reticle Crosshair
-        painter.setPen(QPen(QColor(0, 255, 160, 230), 2))
+        painter.setPen(QPen(COLOR_ACCENT_CYAN, 2))
         painter.drawLine(int(cx - 20), int(cy), int(cx - 6), int(cy))
         painter.drawLine(int(cx + 6), int(cy), int(cx + 20), int(cy))
         painter.drawLine(int(cx), int(cy - 20), int(cx), int(cy - 6))
         painter.drawLine(int(cx), int(cy + 6), int(cx), int(cy + 20))
         painter.drawEllipse(QPointF(cx, cy), 3, 3)
 
-        # FPV Telemetry Overlay Text
         painter.setFont(QFont("Consolas", 10, QFont.Bold))
-        painter.setPen(QColor(0, 255, 160, 240))
+        painter.setPen(COLOR_ACCENT_CYAN)
 
-        # Bottom Left: Telemetry Stats
         painter.drawText(24, h - 60, f"ALT: {m.z:5.1f} m")
         painter.drawText(24, h - 42, f"SPD: {m.speed():5.1f} m/s")
         painter.drawText(24, h - 24, f"BAT: {m.battery:3.0f} %")
 
-        # Bottom Right: Attitude & Heading
         painter.drawText(w - 180, h - 60, f"HDG: {m.heading_deg():03.0f}°")
         painter.drawText(w - 180, h - 42, f"PIT: {m.pitch_deg:+4.0f}°")
         painter.drawText(w - 180, h - 24, f"ROL: {m.roll_deg:+4.0f}°")
 
-        # Top Center Badge
         painter.drawText(int(cx - 50), 32, "FPV CAM 1080P")
 
     # ------------------------------------------------------------------ 2D Mini-Map / Radar Overlay
@@ -909,9 +1220,8 @@ class SimView(QWidget):
         rcx, rcy = rx + rw / 2.0, ry + rh / 2.0
         r_radius = 54.0
 
-        # Dish Background
         self._panel(painter, QRectF(rx, ry, rw, rh), 175, 10)
-        painter.setPen(QPen(QColor(0, 229, 255, 100), 1))
+        painter.setPen(QPen(QColor(53, 213, 240, 100), 1))
         painter.setBrush(Qt.NoBrush)
         painter.drawEllipse(QPointF(rcx, rcy), r_radius, r_radius)
         painter.drawEllipse(QPointF(rcx, rcy), r_radius * 0.5, r_radius * 0.5)
@@ -919,59 +1229,57 @@ class SimView(QWidget):
         painter.drawLine(int(rcx), int(rcy - r_radius), int(rcx), int(rcy + r_radius))
 
         m = self.model
-        scale = r_radius / 35.0  # 35 meters max radar range
+        scale = r_radius / 35.0
 
         def to_radar(wx, wy):
             dx = (wx - m.x) * scale
             dy = (wy - m.y) * scale
-            # Rotate by camera azimuth so top of radar matches screen view
             a = self.cam_az - math.pi / 2.0
             rx_p = dx * math.cos(a) - dy * math.sin(a)
             ry_p = dx * math.sin(a) + dy * math.cos(a)
             return QPointF(rcx + rx_p, rcy - ry_p)
 
-        # Plot HOME (0,0)
+        # Plot HOME
         p_home = to_radar(0.0, 0.0)
         if math.hypot(p_home.x() - rcx, p_home.y() - rcy) <= r_radius:
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(255, 215, 60))
+            painter.setBrush(COLOR_ACCENT_ORANGE)
             painter.drawEllipse(p_home, 3.5, 3.5)
 
         # Plot Elevated Helipads
         for pad in self.elevated_helipads:
             p_pad = to_radar(pad["pos"][0], pad["pos"][1])
             if math.hypot(p_pad.x() - rcx, p_pad.y() - rcy) <= r_radius:
-                painter.setBrush(QColor(255, 140, 40))
+                painter.setBrush(COLOR_ACCENT_ORANGE)
                 painter.drawEllipse(p_pad, 3.0, 3.0)
 
         # Plot Racing Gates
         for gate in self.racing_gates:
             p_gate = to_radar(gate["pos"][0], gate["pos"][1])
             if math.hypot(p_gate.x() - rcx, p_gate.y() - rcy) <= r_radius:
-                painter.setBrush(QColor(255, 0, 180))
+                painter.setBrush(QColor(255, 40, 180))
                 painter.drawEllipse(p_gate, 3.0, 3.0)
 
-        # Drone Marker Arrow at Radar Center
+        # Drone Marker Arrow
         painter.save()
         painter.translate(rcx, rcy)
         radar_rot = math.degrees(m.yaw + self.cam_az - math.pi / 2.0)
         painter.rotate(radar_rot)
-        painter.setPen(QPen(QColor(0, 229, 255), 1.5))
-        painter.setBrush(QColor(0, 229, 255))
+        painter.setPen(QPen(COLOR_ACCENT_CYAN, 1.5))
+        painter.setBrush(COLOR_ACCENT_CYAN)
         painter.drawPolygon(QPolygonF([
             QPointF(0, -6), QPointF(-4, 4), QPointF(4, 4)
         ]))
         painter.restore()
 
-        # Radar Title
         painter.setFont(QFont("Consolas", 8, QFont.Bold))
-        painter.setPen(QColor(0, 229, 255, 200))
+        painter.setPen(QColor(COLOR_ACCENT_CYAN.red(), COLOR_ACCENT_CYAN.green(), COLOR_ACCENT_CYAN.blue(), 200))
         painter.drawText(QRectF(rx, ry + rh - 18, rw, 14), Qt.AlignCenter, "RADAR 35m [M]")
 
     # ------------------------------------------------------------------ Glassmorphism HUD & Labels
     def _panel(self, painter, rect, alpha=150, radius=8):
-        painter.setPen(QPen(QColor(0, 229, 255, 45), 1))
-        painter.setBrush(QColor(12, 16, 24, alpha))
+        painter.setPen(QPen(QColor(53, 213, 240, 50), 1))
+        painter.setBrush(QColor(14, 18, 26, alpha))
         painter.drawRoundedRect(rect, radius, radius)
 
     def _draw_labels(self, painter):
@@ -987,18 +1295,19 @@ class SimView(QWidget):
     def _draw_hud(self, painter, w, h):
         m = self.model
 
-        mode_text = f"MODE: {self.camera_mode} [C]"
+        # Camera & Theme Badge (Top Left)
+        badge_text = f"{self.camera_mode} [C] • {self.env_theme} [T]"
         painter.setFont(QFont("Consolas", 9, QFont.Bold))
         fm = painter.fontMetrics()
-        bw = fm.horizontalAdvance(mode_text) + 16
+        bw = fm.horizontalAdvance(badge_text) + 16
         self._panel(painter, QRectF(66, 10, bw, 24), 160, 6)
-        painter.setPen(QColor(0, 229, 255))
-        painter.drawText(QRectF(74, 12, bw - 16, 20), Qt.AlignLeft | Qt.AlignVCenter, mode_text)
+        painter.setPen(COLOR_ACCENT_CYAN)
+        painter.drawText(QRectF(74, 12, bw - 16, 20), Qt.AlignLeft | Qt.AlignVCenter, badge_text)
 
         self._draw_status(painter, w, h)
         self._draw_heading(painter, w, h)
-        self._draw_tape(painter, m.z, "ALT m", QColor(0, 229, 255), w - 28, y0=60, max_val=30)
-        self._draw_tape(painter, m.speed(), "SPD m/s", QColor(255, 210, 110), w - 28, y0=155, max_val=20)
+        self._draw_tape(painter, m.z, "ALT m", COLOR_ACCENT_CYAN, w - 28, y0=60, max_val=30)
+        self._draw_tape(painter, m.speed(), "SPD m/s", COLOR_ACCENT_ORANGE, w - 28, y0=155, max_val=20)
         self._draw_attitude(painter, w - 176, h - 90, box=66)
         self._draw_compass(painter, w - 90, h - 90)
         self._draw_throttle(painter, m.throttle_pct, w, h)
@@ -1019,10 +1328,10 @@ class SimView(QWidget):
         painter.rotate(roll)
 
         painter.setPen(QPen(QColor(255, 255, 255, 220), 1))
-        painter.setBrush(QColor(85, 145, 215, 180))
+        painter.setBrush(QColor(70, 130, 200, 180))
         painter.drawRect(-box, -box, box * 2, box)
         painter.setPen(QPen(QColor(80, 80, 90, 220), 1))
-        painter.setBrush(QColor(65, 105, 70, 180))
+        painter.setBrush(QColor(55, 95, 60, 180))
         painter.drawRect(-box, 0, box * 2, box)
 
         step = 8.0
@@ -1042,7 +1351,7 @@ class SimView(QWidget):
         painter.drawLine(cx - 16, cy, cx + 16, cy)
         painter.drawLine(cx, cy - 6, cx, cy + 6)
 
-        painter.setPen(QPen(QColor(0, 229, 255, 200), 1.5))
+        painter.setPen(QPen(COLOR_ACCENT_CYAN, 1.5))
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(clip, 6, 6)
 
@@ -1078,7 +1387,7 @@ class SimView(QWidget):
             a = rad(deg - heading)
             px = cx + math.sin(a) * (r - 15)
             py = cy - math.cos(a) * (r - 15)
-            painter.setPen(QColor(0, 229, 255) if deg == 0 else QColor(255, 255, 255, 225))
+            painter.setPen(COLOR_ACCENT_CYAN if deg == 0 else QColor(255, 255, 255, 225))
             painter.drawText(QRectF(px - 8, py - 7, 16, 14), Qt.AlignCenter, ch)
 
         text = f"{heading:03.0f}°"
@@ -1160,7 +1469,7 @@ class SimView(QWidget):
         cy = y0 + 74
         bcol = QColor(16, 185, 129)
         if m.battery < 30:
-            bcol = QColor(245, 158, 11)
+            bcol = COLOR_ACCENT_ORANGE
         if m.battery < 10:
             bcol = QColor(239, 68, 68)
         bx = x0 + 13
@@ -1187,7 +1496,7 @@ class SimView(QWidget):
         self._panel(painter, QRectF(x0, 120, ww, 44), 170, 8)
         painter.setPen(QColor(239, 68, 68))
         painter.drawText(QRectF(x0, 126, ww, 16), Qt.AlignCenter, t1)
-        painter.setPen(QColor(245, 158, 11))
+        painter.setPen(COLOR_ACCENT_ORANGE)
         painter.drawText(QRectF(x0, 142, ww, 16), Qt.AlignCenter, t2)
 
     def _draw_hint(self, painter, w, h):
@@ -1198,7 +1507,7 @@ class SimView(QWidget):
         elif m.z < 0.05:
             hint = "Dorong THROTTLE (+) ke atas untuk terbang"
         elif abs(m.ch1) < 5 and abs(m.ch3) < 5 and abs(m.ch4) < 5:
-            hint = "Drag Mouse: Orbit | C: Kamera | H: HUD | M: Radar | O: Scanlines"
+            hint = "C: Kamera | T: Tema (Day/Sunset/Night) | L: Spotlight | M: Radar | H: HUD"
         if not hint:
             return
         painter.setFont(QFont("Consolas", 9))
