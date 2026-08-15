@@ -4,7 +4,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -12,6 +11,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from drone_model import DroneModel
 from serial_reader import SerialReader
 from style import APP_STYLESHEET
-from widgets import CameraMode, EnvTheme, SimView
+from widgets import CameraMode, SimView
 
 
 class MainWindow(QMainWindow):
@@ -49,25 +49,35 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ UI
     def _build_ui(self):
         central = QWidget(self)
+        central.setObjectName("central")
         self.setCentralWidget(central)
         root = QHBoxLayout(central)
-        root.setContentsMargins(8, 8, 8, 8)
-        root.setSpacing(8)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(12)
 
         self.view = SimView(self.model)
         self.view.setMinimumWidth(680)
         self.view.camera_mode_changed.connect(self._on_cam_mode_changed)
         root.addWidget(self.view, 1)
 
-        side = QVBoxLayout()
-        side.setSpacing(8)
+        # Panel kanan: lebar tetap supaya tidak ikut melebar saat window
+        # di-resize, dan dibungkus scroll area agar window tetap bisa
+        # diperkecil tanpa memampatkan isi panel.
+        side_panel = QWidget()
+        side_panel.setObjectName("sidePanel")
+        side = QVBoxLayout(side_panel)
+        side.setContentsMargins(0, 0, 6, 0)
+        side.setSpacing(9)
 
-        title = QLabel("SIMULATOR DRONE MANGKRAK 3D")
+        title = QLabel("SIMULATOR DRONE\nMANGKRAK 3D")
         title.setObjectName("appTitle")
-        sub = QLabel("Kontrol drone 3D • JOY: Mode 2 (ROLL/THR & YAW/PITCH)")
+        title.setWordWrap(True)
+        sub = QLabel("Kontrol drone 3D • JOY Mode 2\n(ROLL/THR & YAW/PITCH)")
         sub.setObjectName("appSub")
+        sub.setWordWrap(True)
         side.addWidget(title)
         side.addWidget(sub)
+        side.addSpacing(2)
 
         side.addWidget(self._build_serial_box())
         side.addWidget(self._build_camera_box())
@@ -75,13 +85,37 @@ class MainWindow(QMainWindow):
         side.addWidget(self._build_telemetry_box())
         side.addWidget(self._build_log_box(), 1)
         side.addWidget(self._build_help_box())
-        root.addLayout(side)
+
+        scroll = QScrollArea(central)
+        scroll.setObjectName("sideScroll")
+        scroll.setWidget(side_panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(404)
+        root.addWidget(scroll, 0)
 
         self.statusBar().showMessage("Belum terhubung")
+
+    def _field_label(self, text):
+        """Label kolom kiri, dengan warna sekunder dari stylesheet."""
+        lbl = QLabel(text)
+        lbl.setObjectName("fieldLabel")
+        return lbl
+
+    def _set_status(self, online):
+        """Set warna indikator via property, bukan setStyleSheet inline."""
+        self.status_label.setText("● ONLINE" if online else "● OFFLINE")
+        self.status_label.setProperty("state", "online" if online else "offline")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
 
     def _build_serial_box(self):
         box = QGroupBox("Koneksi Remote")
         lay = QGridLayout(box)
+        lay.setHorizontalSpacing(8)
+        lay.setVerticalSpacing(8)
+        lay.setColumnStretch(1, 1)
 
         self.port_combo = QComboBox()
         self.baud_combo = QComboBox()
@@ -94,19 +128,21 @@ class MainWindow(QMainWindow):
         self.connect_btn.setObjectName("connectBtn")
         self.connect_btn.clicked.connect(self._toggle_connect)
 
-        self.status_label = QLabel("● OFFLINE")
-        self.status_label.setStyleSheet("color:#e05b5b; font-weight:bold;")
+        self.status_label = QLabel()
+        self.status_label.setObjectName("statusDot")
+        self.status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._set_status(False)
 
         self.arm_btn = QPushButton("ARM / DISARM  [SPASI]")
         self.arm_btn.setObjectName("armBtn")
         self.arm_btn.setProperty("armed", False)
         self.arm_btn.setCheckable(True)
-        self.arm_btn.setMinimumHeight(36)
+        self.arm_btn.setMinimumHeight(38)
         self.arm_btn.clicked.connect(self._toggle_armed)
 
-        lay.addWidget(QLabel("Port:"), 0, 0)
+        lay.addWidget(self._field_label("Port:"), 0, 0)
         lay.addWidget(self.port_combo, 0, 1, 1, 2)
-        lay.addWidget(QLabel("Baud:"), 1, 0)
+        lay.addWidget(self._field_label("Baud:"), 1, 0)
         lay.addWidget(self.baud_combo, 1, 1)
         lay.addWidget(self.refresh_btn, 1, 2)
         lay.addWidget(self.connect_btn, 2, 0, 1, 2)
@@ -115,24 +151,31 @@ class MainWindow(QMainWindow):
         return box
 
     def _build_camera_box(self):
-        box = QGroupBox("Kamera & Lingkungan V3")
+        box = QGroupBox("Kamera & Lingkungan")
         lay = QGridLayout(box)
+        lay.setHorizontalSpacing(7)
+        lay.setVerticalSpacing(8)
+        for col in range(3):
+            lay.setColumnStretch(col, 1)
 
-        lay.addWidget(QLabel("Kamera:"), 0, 0)
+        lay.addWidget(self._field_label("Kamera:"), 0, 0)
         self.cam_combo = QComboBox()
         self.cam_combo.addItems(CameraMode.ALL)
         self.cam_combo.currentTextChanged.connect(self._on_cam_combo_changed)
         lay.addWidget(self.cam_combo, 0, 1, 1, 2)
 
         self.btn_theme = QPushButton("Tema [T]")
+        self.btn_theme.setObjectName("compactBtn")
         self.btn_theme.clicked.connect(self._on_theme_btn_clicked)
         lay.addWidget(self.btn_theme, 1, 0)
 
         self.btn_spotlight = QPushButton("Lampu [L]")
+        self.btn_spotlight.setObjectName("compactBtn")
         self.btn_spotlight.clicked.connect(self._on_spotlight_btn_clicked)
         lay.addWidget(self.btn_spotlight, 1, 1)
 
         self.btn_radar = QPushButton("Radar [M]")
+        self.btn_radar.setObjectName("compactBtn")
         self.btn_radar.clicked.connect(self.view.toggle_radar)
         lay.addWidget(self.btn_radar, 1, 2)
 
@@ -158,13 +201,16 @@ class MainWindow(QMainWindow):
             self.cam_combo.blockSignals(False)
 
     def _build_channels_box(self):
-        box = QGroupBox("Channel (dari joystick test)")
+        box = QGroupBox("Channel (joystick test)")
         grid = QGridLayout(box)
+        grid.setHorizontalSpacing(7)
+        grid.setVerticalSpacing(7)
+        grid.setColumnStretch(1, 1)
         self.ch_bars = {}
         self.ch_invert = {}
         names = [
             ("CH1", "ROLL"),
-            ("CH2", "THROTTLE"),
+            ("CH2", "THR"),
             ("CH3", "YAW"),
             ("CH4", "PITCH"),
         ]
@@ -175,8 +221,9 @@ class MainWindow(QMainWindow):
             "CH4": "PITCH (J2 Y / GPIO35)",
         }
         for row, (key, label) in enumerate(names):
-            lbl = QLabel(label)
+            lbl = self._field_label(label)
             lbl.setToolTip(tips[key])
+            lbl.setMinimumWidth(44)
             bar = QProgressBar()
             bar.setObjectName(key.lower())
             bar.setToolTip(tips[key])
@@ -184,9 +231,11 @@ class MainWindow(QMainWindow):
             bar.setValue(128)
             bar.setTextVisible(False)
             val = QLabel("0")
-            val.setFixedWidth(42)
+            val.setObjectName("telValue")
+            val.setFixedWidth(32)
             val.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             inv = QCheckBox("Balik")
+            inv.setToolTip(f"Balik arah {label}")
             idx = int(key[2]) - 1
             inv.toggled.connect(lambda checked, i=idx: self._set_invert(i, checked))
             grid.addWidget(lbl, row, 0)
@@ -200,6 +249,9 @@ class MainWindow(QMainWindow):
     def _build_telemetry_box(self):
         box = QGroupBox("Telemetri")
         grid = QGridLayout(box)
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(5)
+        grid.setColumnStretch(0, 1)
         self.tel = {}
         rows = [
             ("alt", "Altitude", "0.0 m"),
@@ -211,7 +263,7 @@ class MainWindow(QMainWindow):
             ("batt", "Baterai", "100 %"),
         ]
         for row, (key, label, init) in enumerate(rows):
-            grid.addWidget(QLabel(label + ":"), row, 0)
+            grid.addWidget(self._field_label(label), row, 0)
             v = QLabel(init)
             v.setObjectName("telValue")
             v.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -222,23 +274,26 @@ class MainWindow(QMainWindow):
     def _build_log_box(self):
         box = QGroupBox("Log")
         lay = QVBoxLayout(box)
+        lay.setContentsMargins(2, 2, 2, 2)
         self.log_view = QTextEdit()
         self.log_view.setReadOnly(True)
-        self.log_view.setMaximumHeight(100)
+        self.log_view.setMinimumHeight(84)
+        self.log_view.setMaximumHeight(120)
         lay.addWidget(self.log_view)
         return box
 
     def _build_help_box(self):
-        box = QGroupBox("Kontrol & Hotkey V3")
+        box = QGroupBox("Hotkey")
         lay = QVBoxLayout(box)
         lbl = QLabel(
-            "SPASI = ARM/DISARM  •  C = Mode Kamera\n"
-            "T = Ganti Tema (Day/Sunset/Night)\n"
-            "L = Lampu Sorot 3D  •  M = Mini-Map Radar\n"
-            "H = Toggle HUD  •  O = FPV Scanlines\n"
-            "Left Drag = Orbit Kamera  •  Scroll = Zoom\n"
-            "R = Reset Drone  •  ESC = Keluar"
+            "SPASI  ARM / DISARM\n"
+            "C  Kamera        T  Tema\n"
+            "L  Lampu Sorot   M  Radar\n"
+            "H  HUD           O  Scanlines\n"
+            "Drag Kiri Orbit  Scroll Zoom\n"
+            "R  Reset         ESC  Keluar"
         )
+        lbl.setObjectName("helpText")
         lay.addWidget(lbl)
         return box
 
@@ -280,8 +335,7 @@ class MainWindow(QMainWindow):
             self.reader.wait(1000)
             self.reader = None
         self.connect_btn.setText("Hubungkan")
-        self.status_label.setText("● OFFLINE")
-        self.status_label.setStyleSheet("color:#e05b5b; font-weight:bold;")
+        self._set_status(False)
         self.model.connected = False
         self._log("Koneksi diputus.")
 
@@ -341,13 +395,9 @@ class MainWindow(QMainWindow):
 
     def _on_connection(self, connected, port):
         self.model.connected = connected
+        self._set_status(connected)
         if connected:
-            self.status_label.setText(f"● ONLINE ({port})")
-            self.status_label.setStyleSheet("color:#7ac76a; font-weight:bold;")
             self._log(f"Terhubung ke {port}. SPASI untuk ARM.")
-        else:
-            self.status_label.setText("● OFFLINE")
-            self.status_label.setStyleSheet("color:#e05b5b; font-weight:bold;")
 
     def _on_failed(self, msg):
         self._log(f"ERROR: {msg}")
