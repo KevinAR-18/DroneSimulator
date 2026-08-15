@@ -2,7 +2,6 @@
 
 **Pembuat Utama (Lead Creator & Developer):** **Ilham Purnomo**  
 Aplikasi simulator penerbangan quadcopter 3D interaktif berbasis **Python** dan **PySide6 QPainter** yang mendukung koneksi transmitter remote control fisik via Serial (Arduino / ESP32).
-
 ---
 
 ## 👤 Pembuat Utama & Kredit Proyek
@@ -14,19 +13,31 @@ Aplikasi simulator penerbangan quadcopter 3D interaktif berbasis **Python** dan 
 
 ## 📋 Fitur Unggulan Perangkat Lunak (Versi 3)
 
-- **Engine Rendering 3D Faceted**: Model quadcopter 3D Dark Carbon FPV, directional sunlighting (Lambertian + Specular shading), 4 landing skids, serta depth sorting tanpa dependensi library 3D eksternal (Pure PySide6 Vector Graphics).
-- **Siklus Tema Waktu (Day / Sunset / Night Cyberpunk)**:
-  - *Day*: Siang cerah dengan awan bergerak (*procedural clouds*).
-  - *Sunset*: Nuansa senja emas (*golden hour*) dengan cahaya matahari hangat.
-  - *Night*: Malam berbintang dengan lampu neon menyala kontras tinggi.
+- **Engine Rendering 3D Faceted**: Model quadcopter 3D matte gelap, directional lighting (Lambertian + specular lembut), serta depth sorting tanpa dependensi library 3D eksternal (Pure PySide6 Vector Graphics).
+- **Siklus Tema Waktu (Day / Sunset / Night)**:
+  - *Day*: Siang berkabut lembut.
+  - *Sunset*: Nuansa senja hangat yang diredam.
+  - *Night*: Malam berbintang dengan pencahayaan rendah.
   - *Hotkey*: Tekan **`T`** untuk mengganti tema.
-- **3D Drone Spotlight / Searchlight**: Sorot lampu 3D memancar dari moncong kamera drone ke tanah (*illuminated ground light pool*). Tekan **`L`** untuk toggle on/off.
+- **3D Drone Spotlight / Searchlight**: Sorot lampu memancar dari moncong drone ke tanah (*illuminated ground light pool*). Tekan **`L`** untuk toggle on/off.
 - **Objek Lingkungan 3D**: Pohon pinus 3D *low-poly* dan kincir angin 3D (*wind turbine*) berputar di kejauhan.
-- **Sistem Multi-Kamera 3D**: Mode `CHASE` (kamera kejar halus), `ORBIT` (free look 360° dengan *inertia damping*), `FPV` (cockpit moncong drone + vignette), dan `TOP-DOWN` (taktis overhead). Tekan **`C`** untuk mengganti mode.
-- **Dynamic Speed Lines & Alerts**: Efek garis akselerasi (*speed lines*) saat kecepatan tinggi ($> 6.5\text{m/s}$), denyut merah low-battery alert, dan peringatan *pull up*.
+- **Sistem Multi-Kamera 3D**: Mode `CHASE` (kamera kejar halus), `ORBIT` (free look 360° dengan *inertia damping*), `FPV` (cockpit moncong drone), dan `TOP-DOWN` (taktis overhead). Tekan **`C`** untuk mengganti mode.
 - **Mini Telemetry Sparkline Graph**: Grafik strip mini real-time di HUD yang memplot ketinggian (*altitude*) dan kecepatan (*speed*).
 - **2D Mini-Map Radar Overlay**: Radar bundar taktis 35m di pojok layar yang menampilkan posisi drone, heading, helipad, dan racing gates secara real-time. Tekan **`M`** untuk toggle.
-- **FPV Betaflight Style OSD**: Interface FPV OSD dengan crosshair reticle, telemetri hijau neon, dan opsi scanline video noise (Tekan **`O`**).
+- **FPV OSD**: Interface FPV dengan crosshair reticle, telemetri, dan opsi scanline video noise (Tekan **`O`**).
+- **Low-Battery Alert**: Denyut lembut di tepi viewport saat baterai di bawah 15%.
+
+---
+
+## 🎨 Sistem Tema & Warna
+
+Seluruh warna aplikasi berasal dari satu modul: **`theme.py`**. Tidak ada literal warna yang ditulis di file lain.
+
+- **Palet**: *Slate Gelap Lembut* — permukaan bertingkat (`#1b1f27` → `#22272f` → `#2a2f39`), teks `#babecd`, aksen teal redup `#60aaba` dan oranye redup `#c08a4e`.
+- **Kontras**: dijaga di rentang **4.5–9:1** (nyaman dipandang lama, tetap memenuhi WCAG AA), bukan 12–17:1 seperti tema neon.
+- **Tanpa titik menyilaukan**: tidak ada putih murni `#ffffff` maupun warna saturasi 100%. Tidak ada piksel di atas luminansi 200 pada rendering normal.
+- **Tabel tema lingkungan**: `THEMES` di `theme.py` mendefinisikan langit, tanah, grid, dan border untuk `DAY` / `SUNSET` / `NIGHT`. Mengubah tema cukup di satu tempat.
+- **Model pencahayaan**: konstanta `LIGHT_AMBIENT` / `LIGHT_DIFFUSE` / `LIGHT_SPECULAR` juga di `theme.py`. Ambient tinggi + diffuse rendah membuat rentang gelap-terang antar permukaan menyempit tanpa membuat model jadi gelap.
 
 ---
 
@@ -35,11 +46,12 @@ Aplikasi simulator penerbangan quadcopter 3D interaktif berbasis **Python** dan 
 | Module | Peran & Deskripsi |
 |--------|-------------------|
 | `main.py` | Entry point utama aplikasi |
+| `theme.py` | **Sumber tunggal warna**: token palet, tabel tema lingkungan, konstanta pencahayaan |
+| `style.py` | Generator stylesheet QSS panel kontrol dari token `theme.py` |
 | `main_window.py` | Window GUI PySide6, pengatur layout, telemetry panel, & event hotkey handler |
-| `widgets.py` | Engine visual 3D (`SimView`), tema lingkungan, kamera, lighting, spotlight, props 3D, FPV OSD, & Radar |
+| `widgets.py` | Engine visual 3D (`SimView`), lingkungan, kamera, lighting, spotlight, props 3D, FPV OSD, & Radar |
 | `drone_model.py` | Simulasi fisika drone, Altitude Hold, tilt angles, drag velocity, & battery system |
 | `serial_reader.py` | Asynchronous QThread parsing data serial RC 4-channel (Baud 115200) |
-| `style.py` | Stylesheet Cyber-Dark QSS modern dengan aksen cyan neon & oranye |
 
 ---
 
